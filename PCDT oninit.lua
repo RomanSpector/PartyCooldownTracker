@@ -1295,6 +1295,7 @@ function PartyCooldownTracker:LoadLastSession()
                 for itemID, itemData in pairs(unitData.trinkets) do
                     if not itemData.spellID then break end
                     if ( self.anyCDs[itemData.spellID] and self.anyCDs[itemData.spellID].display ) then
+                        spells[itemData.spellID] = spells[itemData.spellID] or {}
                         spells[itemData.spellID].cd = unitData.spells[itemData.spellID] and unitData.spells[itemData.spellID].cd
                         spells[itemData.spellID].exp = unitData.spells[itemData.spellID] and unitData.spells[itemData.spellID].exp
                     end
@@ -1993,11 +1994,26 @@ local function setIconPosition(self, state, rowIdx)
     end
 end
 
+function PartyCooldownTracker:sort(allstates)
+    local t = {}
+    for _, state in pairs(allstates) do
+        if state.spellID then
+            t[#t+1] = state
+        end
+    end
+    table.sort(t, function (a,b)     
+        return ( a.spellID > b.spellID ) 
+    end)
+    
+    return t
+end
+
 PartyCooldownTracker.updateFrames = function(self, allstates)
     table.wipe(self.auraCount)
+    local sortTable = self:sort(allstates)
     for guid in pairs(self.roster) do  
-        local rowIdx = 0    
-        for _, state in pairs(allstates) do
+        local rowIdx = 0
+        for _, state in pairs(sortTable) do
             if state.show and state.guid == guid then
                 rowIdx = rowIdx + 1
                 setIconPosition(self, state, rowIdx)
