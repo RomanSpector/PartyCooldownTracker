@@ -108,4 +108,3 @@ function WeakAuras(allstates, event, ...)
         end
     end
 end
-
