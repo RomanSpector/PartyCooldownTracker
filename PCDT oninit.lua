@@ -1315,8 +1315,7 @@ function PartyCooldownTracker:LoadLastSession()
             end
         end
     end
-
-    self.loadedSession = true
+    
 end
 ---------------------------------------------------------------------------------------------------------------------
 local function GetSpellIcon(spellID, unit)

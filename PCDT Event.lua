@@ -19,7 +19,7 @@ function WeakAuras(allstates, event, ...)
             WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 0.1, "INVISUS_COOLDOWNS", "CD_UPDATE")
         elseif event == "RAID_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED" then
             if UnitInRaid("player") and event == "PARTY_MEMBERS_CHANGED" then return end
-            WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 0.3, "WA_PARTY_MEMBERS_UPDATE")
+            WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 1, "WA_PARTY_MEMBERS_UPDATE")
         elseif event == "WA_PARTY_MEMBERS_UPDATE" then
             return self:InitNewMembers(allstates)
         elseif event == "INVISUS_COOLDOWNS" then
