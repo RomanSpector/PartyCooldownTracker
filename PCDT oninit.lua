@@ -976,7 +976,7 @@ PartyCooldownTracker.cds = {
             ["minusPerPoint"] = 30,
         },
         [20252] =  {
-            ["cd"] = 30,
+            ["cd"] = 25,
             ["minus"] = true,
             ["minusTabIndex"] = 2,
             ["minusTalentIndex"] = 15,
@@ -2036,4 +2036,4 @@ function PartyCooldownTracker:scheduleUpdateEvent(event, duration, ...)
     if self.Events[event] then self.Events[event] = WeakAuras.timer:CancelTimer(self.Events[event]) end
     self.Events[event] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 
     duration, event, ...) 
-end
+end 
