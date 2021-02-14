@@ -4,7 +4,7 @@ local _G, pairs, tonumber, select = _G, pairs, tonumber, select
 local GetSpellInfo, GetTime, GetCurrentMapAreaID, GetItemInfo, GetItemIcon= GetSpellInfo, GetTime, GetCurrentMapAreaID, GetItemInfo, GetItemIcon
 local UnitExists, UnitFactionGroup, GetNumPartyMembers = UnitExists, UnitFactionGroup, GetNumPartyMembers
 local UnitInParty, UnitCreatureFamily = UnitInParty, UnitCreatureFamily
-local GetInventoryItemLink, NotifyInspect = GetInventoryItemLink, NotifyInspect
+local GetInventoryItemLink = GetInventoryItemLink
 local GetUnitName, UnitGUID, UnitRace, UnitClass = GetUnitName, UnitGUID, UnitRace, UnitClass
 local config = PartyCooldownTracker.config
 local LoadAddOn, LibStub = LoadAddOn, LibStub
@@ -1257,6 +1257,11 @@ PartyCooldownTracker.blacklist = {
 -------------------------------------------------------------------------------------------------------
 PartyCooldownTracker.roster = PartyCooldownTracker.roster or {}
 PartyCooldownTracker.pet_roster = PartyCooldownTracker.pet_roster or {} 
+
+function PartyCooldownTracker:GetNumPartyMembers()
+    if GetNumPartyMembers() == 0 then return 0 end
+    return config.countUnits <= GetNumPartyMembers() and config.countUnits or GetNumPartyMembers()
+end
 --------------------------------------------------------------------------------------------------------------------
 function PartyCooldownTracker:SaveCurrentSession() 
     db.displays[self.id][WeakAuras.me] = {}
@@ -1268,7 +1273,7 @@ function PartyCooldownTracker:LoadLastSession()
     local data = db.displays[self.id][WeakAuras.me]
     local member = {}
 
-    for i = 1, GetNumPartyMembers() do
+    for i = 1, self:GetNumPartyMembers() do
         local unit = "party"..i
         local unitGUID = UnitGUID(unit)
         if unitGUID then member[unitGUID] = unit end
@@ -1292,7 +1297,7 @@ function PartyCooldownTracker:LoadLastSession()
                     end
                 end
 
-                for itemID, itemData in pairs(unitData.trinkets) do
+                for _, itemData in pairs(unitData.trinkets) do
                     if not itemData.spellID then break end
                     if ( self.anyCDs[itemData.spellID] and self.anyCDs[itemData.spellID].display ) then
                         spells[itemData.spellID] = spells[itemData.spellID] or {}
@@ -1840,7 +1845,7 @@ function PartyCooldownTracker:InitNewMembers(allstates)
         end
     end
 
-    for i = 1, GetNumPartyMembers() do
+    for i = 1, self:GetNumPartyMembers() do
         local unit = "party"..i
         local unitName = GetUnitName(unit)
         local faction = UnitFactionGroup(unit)  
@@ -1937,7 +1942,7 @@ PartyCooldownTracker.auraCount = {}
 
 local function setIconPosition(self, state, rowIdx)
     local unit
-    for i = 1, GetNumPartyMembers() do
+    for i = 1, self:GetNumPartyMembers() do
         local u = "party"..i
         if GetUnitName(u) == state.unitName then unit = u end
     end

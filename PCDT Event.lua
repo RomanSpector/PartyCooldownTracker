@@ -52,8 +52,7 @@ function WeakAuras(allstates, event, ...)
             local unit = ...
             local guid = UnitGUID(unit)
             return self.roster[guid] and self:UnitIsDetected(unit, guid)
-        elseif event == "UNIT_IS_VISIBLE" and ... then
-            local unit, guid = ...
+        elseif event == "UNIT_IS_VISIBLE" and ... then  
             return self.UnitPetCDInit(allstates, ...)
         elseif event == "ZONE_CHANGED_NEW_AREA" then
             return self:Update(allstates)
