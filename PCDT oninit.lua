@@ -1667,12 +1667,12 @@ end
 
 PartyCooldownTracker.detected = {}
 function PartyCooldownTracker:UnitIsDetected(unit, guid, duration)
-    if not (unit and guid) then return end
     if self.detected[guid] then self.detected[guid] = WeakAuras.timer:CancelTimer(self.detected[guid]) end
     if duration then
         self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration, "WA_INSPECT_READY", unit, guid, true)
     else
-        self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 1, "WA_INSPECT_READY", unit, guid)
+        duration = #self.detected > 0 and (self.detected / 10) or 0.1
+        self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration, "WA_INSPECT_READY", unit, guid)
     end
 end
 
