@@ -1666,12 +1666,12 @@ function PartyCooldownTracker:UnitPetCDInit(allstates, unit)
 end
 
 PartyCooldownTracker.detected = {}
-function PartyCooldownTracker:UnitIsDetected(unit, guid, duration)
+function PartyCooldownTracker:UnitIsDetected(unit, guid, isDetected)
     if self.detected[guid] then self.detected[guid] = WeakAuras.timer:CancelTimer(self.detected[guid]) end
-    if duration then
-        self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration, "WA_INSPECT_READY", unit, guid, true)
+    if isDetected then
+        self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 0.05, "WA_INSPECT_READY", unit, guid, true)
     else
-        duration = #self.detected > 0 and (self.detected / 10) or 0.1
+        local duration = #self.detected > 0 and #self.detected or 1
         self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration, "WA_INSPECT_READY", unit, guid)
     end
 end

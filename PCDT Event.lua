@@ -42,7 +42,7 @@ function WeakAuras(allstates, event, ...)
         elseif event == "WA_INSPECT_READY" and ... then
             local unit, guid, nilcheck = ...
             if not nilcheck and CanInspect(unit, true) then
-                return NotifyInspect(unit), self:UnitIsDetected(unit, guid, 0.05)
+                return NotifyInspect(unit), self:UnitIsDetected(unit, guid, true)
             elseif nilcheck then
                 return self:UnitItemInit(allstates, unit, guid)
             else
