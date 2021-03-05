@@ -1,10 +1,10 @@
 function WeakAuras(allstates, event, ...)
     local self, WeakAuras = aura_env, WeakAuras
     if event == "OPTIONS" then
-        if WeakAuras.IsOptionsOpen() and self.loadedSession then
-            self.loadedSession = false
+        if WeakAuras.IsOptionsOpen() then
             self:SaveCurrentSession()
         end
+
         self:InitNewMembers(allstates)
         self:LoadLastSession()
         self:CreateFrames(allstates)
