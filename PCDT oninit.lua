@@ -1521,7 +1521,7 @@ function PartyCooldownTracker:EditState(allstates, guid, spellID, subEvent, dest
     state.changed = true
     state.progressType = state.progressType or "timed"
     state.icon = state.icon or GetSpellIcon(spellID, unit) 
-    state.duration = data.spells[spellID].cd
+    state.duration = data.spells[spellID].cd or 0 -- костыль
     state.expirationTime = GetTime() + state.duration 
     -- custom
     state.autoHide = config.show
