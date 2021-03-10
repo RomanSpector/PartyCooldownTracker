@@ -1905,6 +1905,7 @@ local defaultFramePriorities = {
     [20] = "^PitBull4_Groups_Party", -- pitbull4
     [21] = "^XPerl_party", -- xperl
     [22] = "^PartyMemberFrame", -- blizz
+    [23] = "^CompactRaid", -- blizz
 }
 
 local defaultPartyTargetFrames = {
