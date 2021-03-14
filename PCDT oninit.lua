@@ -1910,7 +1910,6 @@ local defaultFramePriorities = {
 
 local defaultPartyTargetFrames = {
     "SUFChildpartytarget%d",
-    "X-perl%d",
 }
 
 local attachIndex = config.frame - 1
@@ -1921,6 +1920,15 @@ local getFrameOptions = {
     ignorePartyTargetFrame = true,
     partyTargetFrames = defaultPartyTargetFrames,
 }
+if config.blizzFrame then
+    getFrameOptions.ignoreFrames = {
+        "PitBull4_Frames_Target's target's target",
+        "ElvUF_PartyGroup%dUnitButton%dTarget",
+        "ElvUF_FocusTarget",
+        "PartyMemberFrame",
+        "RavenButton",
+    }
+end
 
 local growDirections = {
     [1] = "BOTTOM",
