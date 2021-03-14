@@ -1516,7 +1516,11 @@ function PartyCooldownTracker:EditState(allstates, guid, spellID, subEvent, dest
     local data = self.roster[guid]
     local unit = data.unitID
     local class = data.class
-    
+
+    if ( not data or not (data.spells and data.spells[spellID]) ) then 
+        return; 
+    end
+
     state.show = true
     state.changed = true
     state.progressType = state.progressType or "timed"
