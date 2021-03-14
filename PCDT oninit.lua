@@ -943,8 +943,8 @@ PartyCooldownTracker.cds = {
             ["cd"] = 300,
             ["minus"] = true,
             ["minusTabIndex"] = 3,
-            ["minusTalentIndex"] = 8,
-            ["minusPerPoint"] = 13,
+            ["minusTalentIndex"] = 13,
+            ["minusPerPoint"] = 30,
             ["glyph"] = {["glyphID"] = 63329, ["minus"] = 120},
         },
         [11578] = {
