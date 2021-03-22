@@ -423,7 +423,7 @@ PartyCooldownTracker.cds = {
             ["minusTalentIndex"] = 24,
             ["minusPerPoint"] = 60,
         },
-        ["12043"] = {
+        [12043] = {
             ["tReq"] = true,
             ["tabIndex"] = 1,
             ["talentIndex"] = 16,
