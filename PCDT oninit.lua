@@ -5,7 +5,7 @@ local GetSpellInfo, GetTime, GetCurrentMapAreaID, GetItemInfo, GetItemIcon= GetS
 local UnitExists, UnitFactionGroup, GetNumPartyMembers = UnitExists, UnitFactionGroup, GetNumPartyMembers
 local UnitInParty, UnitCreatureFamily = UnitInParty, UnitCreatureFamily
 local GetInventoryItemLink = GetInventoryItemLink
-local GetUnitName, UnitGUID, UnitRace, UnitClass = GetUnitName, UnitGUID, UnitRace, UnitClass
+local UnitName, UnitGUID, UnitRace, UnitClass = UnitName, UnitGUID, UnitRace, UnitClass
 local config = PartyCooldownTracker.config
 local LoadAddOn, LibStub = LoadAddOn, LibStub
 
@@ -17,7 +17,7 @@ if (not PartyCooldownTracker.libGT) then
 end
 if PartyCooldownTracker.libGT then
     function PartyCooldownTracker:LibGroupTalents_Update(e, guid, unit, newSpec, n1, n2, n3)
-        local unitName = GetUnitName(unit)
+        local unitName = UnitName(unit)
         WeakAuras.timer:ScheduleTimer(
         WeakAuras.ScanEvents, 0.5, "INVISUS_COOLDOWNS", "LibGroupTalents_Update", unit, unitName)
     end
@@ -1670,21 +1670,39 @@ function PartyCooldownTracker:UnitPetCDInit(allstates, unit)
     return createFrame
 end
 
+local function GetTableSize(object)
+    local t = {}
+    for k in pairs(object) do
+        tinsert(t, k)
+    end
+    return #t
+end
+
 PartyCooldownTracker.detected = {}
 function PartyCooldownTracker:UnitIsDetected(unit, guid, isDetected)
-    if self.detected[guid] then self.detected[guid] = WeakAuras.timer:CancelTimer(self.detected[guid]) end
+    if self.detected[guid] then 
+        self.detected[guid] = WeakAuras.timer:CancelTimer(self.detected[guid]) 
+    end
     if isDetected then
         self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 0.05, "WA_INSPECT_READY", unit, guid, true)
     else
-        local duration = #self.detected > 0 and #self.detected or 1
+        local duration = GetTableSize(self.detected) + 1
         self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration, "WA_INSPECT_READY", unit, guid)
     end
+end
+
+local function CreateTrinketFrame(allstates, guid, invSlot, itemName, itemID, spellID, cooldown)
+    PartyCooldownTracker:AddCooldownInfo(guid, spellID, cooldown);
+    PartyCooldownTracker:AddTrinketInfo(guid, invSlot, itemName, itemID, spellID);
+    PartyCooldownTracker:CreateCDFrame(allstates, guid, spellID);
+
+    return true;
 end
 
 function PartyCooldownTracker:UnitItemInit(allstates, unit, guid)
     if not self.roster[guid] then return end
     local createFrames = false
-    local itemsID = {}
+    local invTrinkets = {}
     local check = false
     local Data = self.roster[guid]
     
@@ -1696,15 +1714,12 @@ function PartyCooldownTracker:UnitItemInit(allstates, unit, guid)
             if itemName and itemName ~= Data.trinkets[invSlot].itemName then
                 local spellID = Data.trinkets[invSlot].spellID
                 createFrames = self:RemoveCooldownInfo(allstates, guid, spellID)
-                Data.trinkets[invSlot].spellID = nil
-                Data.trinkets[invSlot].itemName = nil
-                Data.trinkets[invSlot].itemID = itemID
                 Data.trinkets[invSlot] = nil
             end
         end
         
-        if itemID and itemName and not ( Data.trinkets[invSlot] and Data.trinkets[invSlot].itemName ) then 
-            itemsID[itemName] = invSlot
+        if itemName then 
+            invTrinkets[itemName] = invSlot
             check = true
         end
     end
@@ -1713,21 +1728,15 @@ function PartyCooldownTracker:UnitItemInit(allstates, unit, guid)
         for spellID, data in pairs(self.anyCDs) do
             if data.display and data.trinket then
                 if type(data.trinket) == "table" then
-                    for _, ID in pairs(data.trinket) do
-                        if itemsID[GetItemInfo(ID)] then
-                            self:AddCooldownInfo(guid, spellID, data.cd)
-                            self:AddTrinketInfo(guid, itemsID[GetItemInfo(ID)], GetItemInfo(ID), ID, spellID)
-                            self:CreateCDFrame(allstates, guid, spellID) 
-                            createFrames = true
+                    for _, itemId in pairs(data.trinket) do
+                        if invTrinkets[GetItemInfo(itemId)] then
+                            createFrames = CreateTrinketFrame(allstates, guid, invTrinkets[GetItemInfo(itemId)], GetItemInfo(itemId), itemId, spellID, data.cd)
                         end
                     end
                 else
-                    local itemName = GetItemInfo(data.trinket)
-                    if itemsID[itemName] then
-                        self:AddCooldownInfo(guid, spellID, data.cd)
-                        self:AddTrinketInfo(guid, itemsID[itemName], itemName, data.trinket, spellID)
-                        self:CreateCDFrame(allstates, guid, spellID) 
-                        createFrames = true
+                    local itemName = GetItemInfo(data.trinket) 
+                    if invTrinkets[itemName] then
+                        createFrames = CreateTrinketFrame(allstates, guid, invTrinkets[itemName], itemName, data.trinket, spellID, data.cd)
                     end
                 end
             end
@@ -1754,37 +1763,37 @@ function PartyCooldownTracker:CheckTalents(allstates, unit, guid, createFrames)
         if data.display and (data.tReq or data.minus or data.glyph) then   
             if not data.tReq
             or select(5, self.libGT:GetTalentInfo(unit, data.tabIndex, data.talentIndex)) ~= 0 then
-                local cd = data.cd 
+
+                local cooldown = data.cd 
                 if data.glyph and glyphs[data.glyph.glyphID] then
-                    cd = cd - data.glyph.minus
+                    cooldown = cooldown - data.glyph.minus
                 end
+
                 if data.minus then
                     if type(data.minusTabIndex) == "table" then
                         for i = 1, #data.minusTabIndex do
                             local curRank = select(5, self.libGT:GetTalentInfo(unit, data.minusTabIndex[i], data.minusTalentIndex[i])) or 0
-                            cd = cd - curRank * data.minusPerPoint[i]
+                            cooldown = cooldown - curRank * data.minusPerPoint[i]
                         end
                     else
                         local curRank = select(5, self.libGT:GetTalentInfo(unit, data.minusTabIndex, data.minusTalentIndex)) or 0
-                        cd = cd - curRank * data.minusPerPoint
+                        cooldown = cooldown - curRank * data.minusPerPoint
                     end
                 end
+
                 if class == "HUNTER" then
                     for spell, spellData in pairs(self.relationship[class]) do
                         for spellid in pairs(spellData) do
                             if spellid == spellID then
-                                self.relationship[class][spell][spellid] = cd 
+                                self.relationship[class][spell][spellid] = cooldown 
                             end
                         end 
                     end
                 end
                 
-                self:AddCooldownInfo(guid, spellID, cd)
+                self:AddCooldownInfo(guid, spellID, cooldown)
                 update = true
             elseif self.roster[guid].spells[spellID] then
-                if spellID == 36894 then 
-                    self.roster[guid].spells[36892] = nil
-                end
                 update = self:RemoveCooldownInfo(allstates, guid, spellID)
             end
         end
@@ -1852,7 +1861,7 @@ function PartyCooldownTracker:InitNewMembers(allstates)
 
     for i = 1, self:GetNumPartyMembers() do
         local unit = "party"..i
-        local unitName = GetUnitName(unit)
+        local unitName = UnitName(unit)
         local faction = UnitFactionGroup(unit)  
         local _, race = UnitRace(unit)
         local guid = UnitGUID(unit)
@@ -1958,7 +1967,7 @@ local function setIconPosition(self, state, rowIdx)
     local unit
     for i = 1, self:GetNumPartyMembers() do
         local u = "party"..i
-        if GetUnitName(u) == state.unitName then unit = u end
+        if UnitName(u) == state.unitName then unit = u end
     end
     if not unit then
         state.show = false
