@@ -1,30 +1,892 @@
-local WeakAuras, PartyCooldownTracker, db, DEFAULT_CHAT_FRAME = WeakAuras, aura_env, WeakAurasSaved, DEFAULT_CHAT_FRAME
-local WA_GetUnitDebuff, UnitDebuff = WA_GetUnitDebuff, UnitDebuff
-local _G, pairs, tonumber, select = _G, pairs, tonumber, select
-local GetSpellInfo, GetTime, GetCurrentMapAreaID, GetItemInfo, GetItemIcon= GetSpellInfo, GetTime, GetCurrentMapAreaID, GetItemInfo, GetItemIcon
-local UnitExists, UnitFactionGroup, GetNumPartyMembers = UnitExists, UnitFactionGroup, GetNumPartyMembers
-local UnitInParty, UnitCreatureFamily = UnitInParty, UnitCreatureFamily
-local GetInventoryItemLink = GetInventoryItemLink
-local UnitName, UnitGUID, UnitRace, UnitClass = UnitName, UnitGUID, UnitRace, UnitClass
-local config = PartyCooldownTracker.config
-local LoadAddOn, LibStub = LoadAddOn, LibStub
+local WeakAuras, PartyCooldownTracker, db, DEFAULT_CHAT_FRAME = WeakAuras, aura_env, WeakAurasSaved, DEFAULT_CHAT_FRAME;
+local WA_GetUnitDebuff, UnitDebuff = WA_GetUnitDebuff, UnitDebuff;
+local _G, pairs, tonumber, select = _G, pairs, tonumber, select;
+local GetSpellInfo, GetCurrentMapAreaID, GetItemInfo, GetItemIcon= GetSpellInfo, GetCurrentMapAreaID, GetItemInfo, GetItemIcon;
+local UnitExists, UnitFactionGroup, GetNumPartyMembers = UnitExists, UnitFactionGroup, GetNumPartyMembers;
+local UnitInParty, UnitCreatureFamily = UnitInParty, UnitCreatureFamily;
+local GetInventoryItemLink = GetInventoryItemLink;
+local UnitName, UnitGUID, UnitRace, UnitClass = UnitName, UnitGUID, UnitRace, UnitClass;
+local config = PartyCooldownTracker.config;
+local LoadAddOn, LibStub = LoadAddOn, LibStub;
+local GetLocale, GetTime = GetLocale, GetTime;
 
-PartyCooldownTracker.libGT = LibStub:GetLibrary("LibGroupTalents-1.0", true)
+PartyCooldownTracker.libGT = LibStub:GetLibrary("LibGroupTalents-1.0", true);
 
-if (not PartyCooldownTracker.libGT) then
-    local loaded, reason = LoadAddOn("LibGroupTalents-1.0")
-    PartyCooldownTracker.libGT = LibStub:GetLibrary("LibGroupTalents-1.0", true)
+if ( not PartyCooldownTracker.libGT ) then
+    local loaded, reason = LoadAddOn("LibGroupTalents-1.0");
+    PartyCooldownTracker.libGT = LibStub:GetLibrary("LibGroupTalents-1.0", true);
 end
-if PartyCooldownTracker.libGT then
+
+if ( PartyCooldownTracker.libGT ) then
     function PartyCooldownTracker:LibGroupTalents_Update(e, guid, unit, newSpec, n1, n2, n3)
-        local unitName = UnitName(unit)
+        local unitName = UnitName(unit);
         WeakAuras.timer:ScheduleTimer(
         WeakAuras.ScanEvents, 0.5, "INVISUS_COOLDOWNS", "LibGroupTalents_Update", unit, unitName)
     end
-    PartyCooldownTracker.libGT.RegisterCallback(PartyCooldownTracker, "LibGroupTalents_Update")
-elseif not config.lib_error then
-    DEFAULT_CHAT_FRAME:AddMessage("|cff69ccf0PartyCooldownTracker- WA|r couldn't find LibGroupTalents-1.0. Download the lib to display talent required cooldowns. (You can copy the name of lib in the |cffffd100Information|r tab).")
+    PartyCooldownTracker.libGT.RegisterCallback(PartyCooldownTracker, "LibGroupTalents_Update");
+elseif ( not config.lib_error ) then
+    DEFAULT_CHAT_FRAME:AddMessage("|cff69ccf0PartyCooldownTracker- WA|r couldn't find LibGroupTalents-1.0. Download the lib to display talent required cooldowns. (You can copy the name of lib in the |cffffd100Information|r tab).");
 end
+
+-------------------------------------------------------------------------------------------------------
+PartyCooldownTracker.roster = PartyCooldownTracker.roster or {};
+PartyCooldownTracker.pet_roster = PartyCooldownTracker.pet_roster or {};
+
+function PartyCooldownTracker:GetNumPartyMembers()
+    if ( GetNumPartyMembers() == 0 ) then
+        return 0;
+    end
+    return config.countUnits <= GetNumPartyMembers() and config.countUnits or GetNumPartyMembers();
+end
+--------------------------------------------------------------------------------------------------------------------
+function PartyCooldownTracker:SaveCurrentSession() 
+    db.displays[self.id][WeakAuras.me] = {};
+    local data = db.displays[self.id][WeakAuras.me];
+
+
+    data.roster = self.roster;
+end
+
+function PartyCooldownTracker:GroupRosterGeneration(object)
+    for i = 1, self:GetNumPartyMembers() do
+        local unit = "party"..i;
+        if ( UnitExists(unit) ) then 
+            object[UnitGUID(unit)] = unit; 
+        end
+    end
+    return object;
+end
+
+function PartyCooldownTracker:LoadLastSession()
+    local data = db.displays[self.id][WeakAuras.me];
+    local members = self:GroupRosterGeneration({});
+
+    if ( ( not data ) or ( data and not data.roster ) ) then
+        return;
+    end
+
+    for guid, unitDATA in pairs(data.roster) do
+        if ( members[guid] and self.roster[guid] ) then
+            local class = unitDATA.class;
+            local unitID = members[guid];
+            local member = self.roster[guid];
+            for spellID, info in pairs(unitDATA.spells) do
+                if ( self.cds[class][spellID] and self.cds[class][spellID].display )
+                or ( self.anyCDs[spellID] and self.anyCDs[spellID].display ) then
+
+                    member.spells = member.spells or {};
+                    member.spells[spellID] = member.spells[spellID] or {};
+                    member.spells[spellID].cd = info.cd;
+                    if ( info.exp and math.abs(info.exp - GetTime()) < info.cd ) then
+                        member.spells[spellID].dst = info.dst;
+                        member.spells[spellID].exp = info.exp;
+                    end
+                end
+            end
+
+            for invSlot, itemData in pairs(unitDATA.trinkets) do
+                if ( self.anyCDs[itemData.spellID] and self.anyCDs[itemData.spellID].display ) then
+                    self:AddTrinketInfo(guid, invSlot, itemData.itemName, itemData.itemID, itemData.spellID)
+                end
+            end
+
+            for petGUID, petData in pairs(unitDATA.pet) do
+                self.pet_roster[petGUID] = petData;
+                for spellID, info in pairs(petData.spells) do
+                    self:AddCooldownInfo(guid, spellID, info.cd)
+                end
+            end
+
+            self.roster[guid] = member;
+        end
+    end
+
+end
+---------------------------------------------------------------------------------------------------------------------
+local function GetSpellIcon(spellID, guid)
+    local icon = select(3, GetSpellInfo(spellID));
+    local data = PartyCooldownTracker.roster[guid];
+
+    if ( data and data.trinkets ) then
+        for slotID, slotINFO in pairs(data.trinkets) do
+            if ( slotINFO.spellID == spellID ) then
+                icon = GetItemIcon(slotINFO.itemID) or icon;
+                break;
+            end
+        end
+    end
+    return icon;
+end 
+
+function PartyCooldownTracker.GetPetGUID(unitID)
+    if ( unitID and unitID:match("party") ) then
+        local i = (unitID):match("%d");
+        local petID = "partypet"..i;
+        if ( UnitExists(petID) ) then
+            local petGUID = UnitGUID(petID);
+            return petGUID;
+        end
+    end            
+end
+
+local function GetPetID(unitID)
+    local i = (unitID):match("%d");
+    if ( i and UnitExists("partypet"..i) ) then
+        return "partypet"..i;
+    end
+end
+
+function PartyCooldownTracker:AdditionalVerification(allstates, subEvent, guid, spellID, destGUID)
+    if not ( subEvent == "SPELL_CAST_SUCCESS" ) then 
+        return;
+    end
+
+    local class = self.roster[guid] and self.roster[guid].class;
+    if ( self.relationship[class] and self.relationship[class][spellID] ) then
+        if ( not self.roster[guid].spells[spellID] ) then 
+            return true, self:Relationship(allstates, guid, spellID, destGUID);
+        end
+    end
+end
+
+function PartyCooldownTracker:SpellIsDisplay(guid, spellID, spellName)
+    if ( self.roster[guid] and self.roster[guid].spells[spellID] ) then
+        return guid;
+    elseif ( self.pet_roster[guid] ) then
+        guid = self.pet_roster[guid].unitGUID;
+        if ( self.roster[guid] and self.roster[guid].spells[spellID] ) then
+            return guid;
+        end
+    elseif ( self.roster[guid] and self.USS[spellName] and self.USS[spellName].display ) then
+        return guid;
+    else
+        return false;
+    end
+end
+
+function PartyCooldownTracker:AddInfo(guid, spellID, exp, dst)
+    if not ( self.roster[guid] and self.roster[guid].spells[spellID] ) then 
+        return;
+    end
+
+    self.roster[guid].spells[spellID].exp = exp;
+    self.roster[guid].spells[spellID].dst = dst;
+end
+
+local C_PVP = {};
+C_PVP[0] = true;
+
+C_PVP.IsPVPMap = function() 
+    return C_PVP[GetCurrentMapAreaID()];
+end
+
+function PartyCooldownTracker:Update(allstates)
+    if ( not C_PVP.IsPVPMap() ) then 
+        return
+    end
+
+    for _, state in pairs(allstates) do
+        if ( state and state.show ) then
+            state.changed=  true;
+            state.expirationTime = GetTime();
+            state.dst = false;
+            state.isBuff = false;
+            state.isCD = false;
+            
+            self:AddInfo(state.guid, state.spellID, state.expirationTime, state.dst);
+        end
+    end
+    return true;
+end
+-- Checking spells that have one CD
+function PartyCooldownTracker:Relationship(allstates, guid, spellID, destGUID) 
+    local class = self.roster[guid].class;
+    if ( self.relationship[class] and self.relationship[class][spellID] ) then
+
+        if ( spellID == 10278 and guid ~= destGUID ) then 
+            return
+        end
+
+        for id, cd in pairs(self.relationship[class][spellID]) do
+            local state = allstates[guid..id];
+            if ( state and (not state.isCD or state.expirationTime < cd + GetTime()) ) then
+                
+                state.show = true;
+                state.changed = true;
+                state.progressType = "timed";
+                state.duration = cd;
+                state.expirationTime = cd + GetTime();
+                state.isCD = true;
+                state.dst = config.des;
+                
+                allstates[guid..id] = state;
+                self:AddInfo(guid, id, state.expirationTime, state.dst);
+            end
+        end
+    end    
+end      
+
+function PartyCooldownTracker:GetHypothermia(allstates, guid, id)
+    local state = allstates[guid..id];
+    if ( not state ) then
+        return;
+    end
+
+    local hypothermia = GetSpellInfo(41425);
+    state.changed = true;
+    
+    if ( WA_GetUnitDebuff(state.unit, hypothermia) ) then
+        state.expirationTime = select(7, UnitDebuff(state.unit, hypothermia));
+        allstates[guid..id] = state;
+        self:AddInfo(guid, id, state.expirationTime, state.dst);
+    else
+        state.dst = false;
+        state.isCD = false;
+        state.isBuff = false;
+        state.expirationTime = GetTime();
+        allstates[guid..id] = state;
+        self:AddInfo(guid, id, state.expirationTime, state.dst);
+    end 
+end
+
+function PartyCooldownTracker:RefreshState(allstates, guid, spellID) 
+    for _, id in pairs(self.refresh[spellID]) do
+        if ( id == 45438 ) then
+            return self:GetHypothermia(allstates, guid, id);
+        end
+
+        if ( allstates[guid..id] ) then
+            local state = allstates[guid..id];
+            state.changed = true;
+            state.expirationTime = GetTime();
+            state.dst = false;
+            state.isCD = false;
+            state.isBuff = false;
+            
+            allstates[guid..id] = state;
+            self:AddInfo(guid, id, state.expirationTime, state.dst);
+        end
+    end
+end
+
+function PartyCooldownTracker:SetDesaturated(allstates, guid, spellID)
+    local state = allstates[guid..spellID];
+    if ( not state ) then
+        return;
+    end
+
+    if ( self.blacklist[spellID] ) then
+        state.expirationTime = GetTime() + state.duration;
+        state.dst = config.des;
+        state.isCD = true;
+        state.isBuff = false;
+        
+        self:AddInfo(guid, spellID, state.expirationTime, state.dst);
+
+    elseif ( state.isCD and state.isBuff ) then
+        state.expirationTime = state.expirationTime;
+        state.isBuff = false;
+        state.dst = config.des;
+        
+        self:AddInfo(guid, spellID, state.expirationTime, state.dst);
+    end
+    return true;
+end
+
+function PartyCooldownTracker:SetGlow(allstates, guid, spellID, duration)
+    local state = allstates[guid..spellID];
+    if ( not state ) then
+        return;
+    end
+
+    state.isBuff = config.glow;
+    state.dst = false;
+    if ( not self.blacklist[spellID] and duration ) then
+        if ( spellID == 43039 ) then duration = 60; end
+        WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration,
+        "COMBAT_LOG_EVENT_UNFILTERED", GetTime(), "SPELL_AURA_REMOVED", guid, nil, nil, nil, nil, nil, spellID);
+    end
+    return true
+end
+----------------------        CREATE FRAME      -------------------------------------------------------
+-- created when the event is fired
+function PartyCooldownTracker:EditState(allstates, guid, spellID, subEvent, destGUID) 
+    allstates[guid..spellID] = allstates[guid..spellID] or {};
+    local state = allstates[guid..spellID];
+    local data = self.roster[guid];
+    local unit = data.unitID;
+    local class = data.class;
+
+    if ( not data or not (data.spells and data.spells[spellID]) ) then 
+        return;
+    end
+
+    state.show = true;
+    state.changed = true;
+    state.progressType = state.progressType or "timed";
+    state.icon = state.icon or GetSpellIcon(spellID, guid);
+    state.duration = data.spells[spellID].cd;
+    state.expirationTime = GetTime() + state.duration;
+    -- custom
+    state.autoHide = config.show;
+    state.isCD = true;
+    state.dst = config.des;
+    state.isBuff = false;
+    state.unit = data.unitID;
+    state.unitName = data.unitName;
+    state.guid = guid;
+    state.spellID = spellID;
+
+    allstates[guid..spellID] = state;
+    self:AddInfo(guid, spellID, state.expirationTime, state.dst);
+    
+    if ( self.refresh[spellID] and subEvent ~= "UNIT_DIED" ) then
+        self:RefreshState(allstates, guid, spellID);
+    elseif ( self.relationship[class] and self.relationship[class][spellID] ) then
+        self:Relationship(allstates, guid, spellID, destGUID);
+    end
+    return true;
+end
+-- main create
+function PartyCooldownTracker:CreateCDFrame(allstates, guid, spellID)
+    local unitDATA = self.roster[guid];
+    local spellDATA = unitDATA.spells[spellID];
+    
+    allstates[guid..spellID] = {
+        show = true,
+        changed = true,
+        autoHide = config.show,
+        icon = GetSpellIcon(spellID, guid), 
+        progressType = "timed",
+        duration = spellDATA.cd,
+        expirationTime = spellDATA.exp or GetTime(),
+        -- custom
+        unit = unitDATA.unitID,
+        isCD = ( spellDATA.exp and spellDATA.exp > GetTime() ) and true or false,
+        unitName = unitDATA.unitName,
+        dst = spellDATA.dst or false,
+        isBuff = false,
+        guid = guid,
+        spellID = spellID,
+    };
+end
+
+function PartyCooldownTracker:CreateFrame(allstates, guid)
+    local unitDATA = self.roster[guid];
+    for spellID in pairs(unitDATA.spells) do
+        self:CreateCDFrame(allstates, guid, spellID);
+    end
+end
+
+function PartyCooldownTracker:CreateFrames(allstates)
+    for guid in pairs(self.roster) do
+        self:CreateFrame(allstates, guid);
+    end
+end
+--------------------------------------------------------------------------
+function PartyCooldownTracker:AddCooldownInfo(guid, id, cd)
+    self.roster[guid].spells[id] = self.roster[guid].spells[id] or {};
+    self.roster[guid].spells[id].cd = cd;
+end
+
+function PartyCooldownTracker:AddTrinketInfo(guid, invSlot, itemName, itemID, spellID)
+    self.roster[guid].trinkets[invSlot] = self.roster[guid].trinkets[invSlot] or {};
+    self.roster[guid].trinkets[invSlot].itemName = itemName;
+    self.roster[guid].trinkets[invSlot].spellID = spellID;
+    self.roster[guid].trinkets[invSlot].itemID = itemID;
+end
+
+function PartyCooldownTracker:AddPetsInfo(unitGUID, petGUID, id, cd)
+    self.roster[unitGUID].pet[petGUID].spells[id] = self.roster[unitGUID].pet[petGUID].spells[id] or {};
+    self.roster[unitGUID].pet[petGUID].spells[id].cd = cd;
+end
+--------------------------------------------------------------------------
+function PartyCooldownTracker:RemoveCooldownInfo(allstates, guid, spellID)
+    self.roster[guid].spells[spellID] = nil;
+    local state = allstates[guid..spellID];
+
+    if ( not state ) then
+        return;
+    end
+
+    state.show = false;
+    state.changed = true;
+    allstates[guid..spellID] = state;
+    return true;
+end
+
+function PartyCooldownTracker:PetCooldownRemove(allstates, guid)
+    local update = falsel
+    for petGUID, data in pairs(self.pet_roster) do
+        if ( data.unitGUID == guid ) then
+            for spellID in pairs(data.spells) do
+                self:RemoveCooldownInfo(allstates, guid, spellID);
+            end
+            self.pet_roster[petGUID] = nil;
+            self.roster[guid].pet[petGUID] = nil;
+            update = true;
+        end
+    end
+    return update;
+end
+
+function PartyCooldownTracker:PetCooldownInit(allstates, unitGUID, petGUID, petType)
+    local createFrames = false;
+    for spellID, data in pairs(self.pets[petType]) do
+        if ( data.display ) then
+            self.pet_roster[petGUID].spells[spellID] = true;
+            self:AddPetsInfo(unitGUID, petGUID, spellID, data.cd);
+            self:AddCooldownInfo(unitGUID, spellID, data.cd);
+            self:CreateCDFrame(allstates, unitGUID, spellID);
+            createFrames = true;
+        end
+    end
+    return createFrames;
+end
+
+local function CreatePetRoster(unitGUID, petType)
+    return { unitGUID = unitGUID, type = petType, spells = {} };
+end
+
+function PartyCooldownTracker:UnitPetCDInit(allstates, unit)
+    local createFrame = false;
+    local unitGUID = UnitGUID(unit);
+    local petID = GetPetID(unit);
+
+    if ( ( not petID ) or ( not self.roster[unitGUID] ) ) then
+        return;
+    end
+
+    local petType = UnitCreatureFamily(petID);
+    local petGUID = UnitGUID(petID);
+    if ( self.pets[petType] and not self.pet_roster[petGUID] ) then
+        self.pet_roster[petGUID] = CreatePetRoster(unitGUID, petType);
+        self.roster[unitGUID].pet[petGUID] = CreatePetRoster(unitGUID, petType);
+        if ( self:PetCooldownInit(allstates, unitGUID, petGUID, petType) ) then
+            createFrame = true;
+        end
+    end
+    
+    return createFrame;
+end
+
+local function GetTableSize(object)
+    local t = {};
+    for _, v in pairs(object) do
+        tinsert(t, v);
+    end
+    return #t;
+end
+
+local function ScheduleTimer(duration, unit, guid, nilchek)
+    WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration, "WA_INSPECT_READY", unit, guid, nilchek);
+end
+
+PartyCooldownTracker.detected = {};
+function PartyCooldownTracker:UnitIsDetected(unit, guid, isDetected)
+    if ( self.detected[guid] ) then
+        self.detected[guid] = WeakAuras.timer:CancelTimer(self.detected[guid]);
+    end
+    if ( isDetected ) then
+        self.detected[guid] = ScheduleTimer(0.05, unit, guid, true);
+    else
+        local duration = GetTableSize(self.detected) + 1;
+        self.detected[guid] = ScheduleTimer(duration, unit, guid, false);
+    end
+end
+
+local function CreateTrinketFrame(allstates, guid, invSlot, itemName, itemID, spellID, cooldown)
+    PartyCooldownTracker:AddCooldownInfo(guid, spellID, cooldown);
+    PartyCooldownTracker:AddTrinketInfo(guid, invSlot, itemName, itemID, spellID);
+    PartyCooldownTracker:CreateCDFrame(allstates, guid, spellID);
+    return true;
+end
+
+function PartyCooldownTracker:UnitItemInit(allstates, unit, guid)
+    if ( not self.roster[guid] ) then
+        return;
+    end
+    local createFrames = false;
+    local invTrinkets = {};
+    local check = false;
+    local data = self.roster[guid];
+    
+    for invSlot = 13, 14 do
+        local itemLink = GetInventoryItemLink(unit, invSlot) or "";
+        local itemID = (itemLink):match("item:(%d+):") or "";
+        local itemName = GetItemInfo(itemLink);
+
+        if ( data.trinkets and data.trinkets[invSlot] ) then
+            if ( itemName and itemName ~= data.trinkets[invSlot].itemName ) then
+                local spellID = data.trinkets[invSlot].spellID;
+                createFrames = self:RemoveCooldownInfo(allstates, guid, spellID);
+                data.trinkets[invSlot] = nil;
+            end
+        end
+        
+        if itemName then 
+            invTrinkets[itemName] = invSlot;
+            check = true;
+        end
+    end
+    
+    if ( not check ) then
+        return;
+    end
+
+    for spellID, info in pairs(self.anyCDs) do
+        if ( info.display and info.trinket ) then
+            if ( type(info.trinket) == "table" ) then
+                for _, itemID in pairs(info.trinket) do
+                    if ( invTrinkets[GetItemInfo(itemID)] ) then
+                        local itemName = GetItemInfo(itemID);
+                        local invSlot = invTrinkets[itemName];
+                        local cooldown = info.cd;
+                        createFrames = CreateTrinketFrame(allstates, guid, invSlot, itemName, itemID, spellID, cooldown);
+                    end
+                end
+            else
+                local itemName = GetItemInfo(info.trinket);
+                if ( invTrinkets[itemName] ) then
+                    local invSlot = invTrinkets[itemName];
+                    local cooldown = info.cd;
+                    local itemID = info.trinket;
+                    createFrames = CreateTrinketFrame(allstates, guid, invSlot, itemName, itemID, spellID, cooldown);
+                end
+            end
+        end
+    end
+
+    return createFrames;
+end
+
+function PartyCooldownTracker:GlyphsRosterGeneration(object, unit)
+    local active = self.libGT:GetActiveTalentGroup(unit);
+    for i = 1, 6 do 
+        local glyph = select(i, self.libGT:GetUnitGlyphs(unit, active));
+        if ( glyph ) then   
+            object[glyph] = true;
+        end
+    end
+    return object;
+end
+
+function PartyCooldownTracker:CheckTalents(allstates, unit, guid, createFrames)
+    local update = createFrames;
+    local class = self.roster[guid].class;
+    local glyphs = self:GlyphsRosterGeneration({}, unit);
+    
+    for spellID, data in pairs(self.cds[class]) do
+        if ( data.display and (data.tReq or data.minus or data.glyph) ) then   
+            if ( not data.tReq
+            or select(5, self.libGT:GetTalentInfo(unit, data.tabIndex, data.talentIndex)) ~= 0 ) then
+                local cooldown = data.cd;
+                local glyphSlot = data.glyph;
+
+                if ( glyphSlot and glyphs[glyphSlot.glyphID] ) then
+                    cooldown = cooldown - glyphSlot.minus;
+                end
+
+                if ( data.minus ) then
+                    if ( type(data.minusTabIndex) == "table" ) then
+                        for i = 1, #data.minusTabIndex do
+                            local curRank = select(5, self.libGT:GetTalentInfo(unit, data.minusTabIndex[i], data.minusTalentIndex[i])) or 0;
+                            cooldown = cooldown - curRank * data.minusPerPoint[i];
+                        end
+                    else
+                        local curRank = select(5, self.libGT:GetTalentInfo(unit, data.minusTabIndex, data.minusTalentIndex)) or 0;
+                        cooldown = cooldown - curRank * data.minusPerPoint;
+                    end
+                end
+
+                if ( class == "HUNTER" ) then
+                    for spell, spellData in pairs(self.relationship[class]) do
+                        for spellId in pairs(spellData) do
+                            if ( spellId == spellID ) then
+                                self.relationship[class][spell][spellId] = cooldown;
+                            end
+                        end 
+                    end
+                end
+                
+                self:AddCooldownInfo(guid, spellID, cooldown);
+                update = true;
+            elseif ( self.roster[guid].spells[spellID] ) then
+                update = self:RemoveCooldownInfo(allstates, guid, spellID);
+            end
+        end
+    end
+
+    if ( update ) then
+        self:CreateFrame(allstates, guid);
+    end
+    WeakAuras.ScanEvents("UNIT_IS_VISIBLE", unit, guid);
+    return update;
+end
+
+function PartyCooldownTracker:UnitCooldownsInit(allstates, unit, guid)
+    local class = self.roster[guid].class;
+    local race = self.roster[guid].race;
+    local check = false;
+    local createFrames = false;
+    
+    for spellID, data in pairs(self.cds[class]) do
+        if ( data.display ) then
+            if ( not data.tReq ) then
+                self:AddCooldownInfo(guid, spellID, data.cd);
+                createFrames = true;
+            end
+            
+            if ( not check and (data.tReq or data.minus) ) then
+                check = true;
+            end
+        end
+    end  
+    
+    for spellID, data in pairs(self.anyCDs) do
+        if ( data.display ) then
+            if ( data.race == race ) then
+                self:AddCooldownInfo(guid, spellID, data.cd);
+                createFrames = true;
+            end
+        end
+    end
+    
+    if ( check and self.libGT and self.libGT:GetUnitTalents(unit) ) then
+        return self:CheckTalents(allstates, unit, guid, createFrames);
+    elseif ( createFrames ) then
+        self:CreateFrame(allstates, guid);
+    end
+    return createFrames;
+end
+
+function PartyCooldownTracker:RosterGeneration(unit, guid, unitClass, faction, race, unitName)
+    return { 
+        spells = {}, 
+        trinkets = {}, 
+        pet = {},
+        unitID = unit, 
+        class = unitClass, 
+        faction = faction, 
+        race = race, 
+        unitName = unitName,
+    };
+end
+
+function PartyCooldownTracker:InitNewMembers(allstates)
+    local updateFrames = false;
+    for guid, unitData in pairs(self.roster) do
+        if ( not UnitInParty(unitData.unitName) ) then
+            if ( unitData.spells ) then
+                for id in pairs(unitData.spells) do
+                    self:RemoveCooldownInfo(allstates, guid, id);
+                    self:PetCooldownRemove(allstates, guid);
+                end 
+            end
+            self.roster[guid] = nil;
+            updateFrames = true;
+        end
+    end
+
+    for i = 1, self:GetNumPartyMembers() do
+        local unit = "party"..i;
+        local unitName = UnitName(unit);
+        local faction = UnitFactionGroup(unit) ; 
+        local _, race = UnitRace(unit);
+        local guid = UnitGUID(unit);
+        local _, unitClass = UnitClass(unit);
+
+        if ( unitName ~= _G.UNKNOWNOBJECT and not self.roster[guid] ) then
+            if ( self.cds[unitClass] ) then
+                self.roster[guid] = self:RosterGeneration(unit, guid, unitClass, faction, race, unitName);
+
+                if ( self:UnitPetCDInit(allstates, unit) ) then
+                    updateFrames = true;
+                end
+                if ( self:UnitCooldownsInit(allstates, unit, guid) ) then
+                    updateFrames = true;
+                end
+            end
+        end
+    end
+    return updateFrames;
+end
+-------------- >> ANCHOR TO FRMAE << ----------------
+local defaultFramePriorities = {
+    -- raid frames
+    [0] = nil,
+    [1] = "^Vd1", -- vuhdo
+    [2] = "^Vd2", -- vuhdo
+    [3] = "^Vd3", -- vuhdo
+    [4] = "^Vd4", -- vuhdo
+    [5] = "^Vd5", -- vuhdo
+    [6] = "^Vd", -- vuhdo
+    [7] = "^HealBot", -- healbot
+    [8] = "^GridLayout", -- grid
+    [9] = "^Grid2Layout", -- grid2
+    [10] = "^PlexusLayout", -- plexus
+    [11] = "^ElvUF_RaidGroup", -- elv
+    [12] = "^oUF_bdGrid", -- bdgrid
+    [13] = "^oUF_.-Raid", -- generic oUF
+    [14] = "^LimeGroup", -- lime
+    [15] = "^SUFHeaderraid", -- suf
+    -- party frames
+    [16] = "^AleaUI_GroupHeader", -- Alea
+    [17] = "^SUFHeaderparty", --suf
+    [18] = "^ElvUF_PartyGroup", -- elv
+    [19] = "^oUF_.-Party", -- generic oUF
+    [20] = "^PitBull4_Groups_Party", -- pitbull4
+    [21] = "^XPerl_party", -- xperl
+    [22] = "^PartyMemberFrame", -- blizz
+    [23] = "^CompactRaid", -- blizz
+};
+
+local defaultPartyTargetFrames = {
+    "SUFChildpartytarget%d",
+};
+
+local attachIndex = ( config.frame - 1 );
+local getFrameOptions = {
+    framePriorities = {
+        [1] = defaultFramePriorities[attachIndex],
+    },
+    ignorePartyTargetFrame = true,
+    partyTargetFrames = defaultPartyTargetFrames,
+};
+if ( config.blizzFrame ) then
+    getFrameOptions.ignoreFrames = {
+        "PitBull4_Frames_Target's target's target",
+        "ElvUF_PartyGroup%dUnitButton%dTarget",
+        "ElvUF_FocusTarget",
+        "PartyMemberFrame",
+        "RavenButton",
+    };
+end
+
+local growDirections = {
+    [1] = "BOTTOM",
+    [2] = "BOTTOMLEFT",
+    [3] = "BOTTOMRIGHT",    
+    [4] = "CENTER",
+    [5] = "LEFT",
+    [6] = "RIGHT",
+    [7] = "TOP",
+    [8] = "TOPLEFT",
+    [9] = "TOPRIGHT",
+};
+
+PartyCooldownTracker.positionFrom = growDirections[config.anchor];
+PartyCooldownTracker.positionTo = growDirections[config.anchorTo];
+PartyCooldownTracker.spacing = config.spacing;
+PartyCooldownTracker.xOffset = config.xOffset;
+PartyCooldownTracker.yOffset = config.yOffset;
+PartyCooldownTracker.column = config.column;
+PartyCooldownTracker.auraCount = {};
+
+local function setIconPosition(self, state, rowIdx)
+    local unitToken;
+    for i = 1, self:GetNumPartyMembers() do
+        local unit = "party"..i;
+        if ( UnitName(unit) == state.unitName ) then unitToken = unit; end
+    end
+    if ( not unitToken ) then
+        state.show = false
+        state.changed = true
+    else
+        state.unitID = unitToken;
+        local region = WeakAuras.GetRegion(self.id, state.guid..state.spellID);
+        local f = WeakAuras.GetUnitFrame(state.unitID, getFrameOptions);
+        if ( f and region ) then
+            self.auraCount[state.unitID] = self.auraCount[state.unitID] or {};
+            self.auraCount[state.unitID].rowIdx = self.auraCount[state.unitID].rowIdx or 0;
+            self.auraCount[state.unitID].column = self.auraCount[state.unitID].column or 0;
+            self.auraCount[state.unitID].delta = self.auraCount[state.unitID].delta or 1;
+
+            if ( self.auraCount[state.unitID].rowIdx == self.column ) then
+                self.auraCount[state.unitID].column = self.auraCount[state.unitID].column + 1;
+                self.auraCount[state.unitID].rowIdx = 0;
+                self.auraCount[state.unitID].delta = rowIdx;
+            end
+
+            local order = self.auraCount[state.unitID].column;
+            local xoffset, yoffset = 0, 0;
+            local height, width = region:GetHeight() + self.spacing, region:GetWidth() + self.spacing;
+            local delta = self.auraCount[state.unitID].delta;
+
+            if ( config.direction == 1 ) then -- Влево, затем вниз
+                yoffset = yoffset - (order * height);
+                xoffset = xoffset - (rowIdx - delta) * width;
+            elseif ( config.direction == 2 ) then -- Вправо, затем вниз
+                yoffset = yoffset - (order * height);
+                xoffset = xoffset + (rowIdx - delta) * width;
+            elseif ( config.direction == 3 ) then -- Влево, затем вверх
+                yoffset = yoffset + (order * height);
+                xoffset = xoffset - (rowIdx - delta) * width;
+            elseif ( config.direction == 4 ) then  -- Вправо, затем вверх
+                yoffset = yoffset + (order * height);
+                xoffset = xoffset + (rowIdx - delta) * width;
+            end
+
+            region:SetAnchor(self.positionFrom, f, self.positionTo);
+            region:SetOffset(xoffset + self.xOffset, yoffset + self.yOffset);
+            self.auraCount[state.unitID].rowIdx = self.auraCount[state.unitID].rowIdx + 1;
+        else
+            region:SetAnchor(self.positionFrom, _G.UIParent, self.positionTo);
+            region:SetOffset(-3000, 0);
+            if ( not config.lib_error ) then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff69ccf0PartyCooldownTracker|r: 404 frame not found. Calling the function again.")
+            end
+            self:scheduleUpdateEvent("INVISUS_COOLDOWNS", 0.5, "FRAME_UPDATE");
+        end
+    end
+end
+
+function PartyCooldownTracker:sort(allstates)
+    local t = {};
+    for _, state in pairs(allstates) do
+        if ( state.spellID ) then
+            t[#t+1] = state;
+        end
+    end
+    table.sort(t, function (a,b)
+        return ( a.spellID > b.spellID ) 
+    end)
+    
+    return t;
+end
+
+PartyCooldownTracker.updateFrames = function(self, allstates)
+    table.wipe(self.auraCount);
+    local sortTable = self:sort(allstates);
+    for guid in pairs(self.roster) do  
+        local rowIdx = 0;
+        for _, state in pairs(sortTable) do
+            if ( state.show and state.guid == guid ) then
+                rowIdx = rowIdx + 1;
+                setIconPosition(self, state, rowIdx);
+            end                
+        end            
+    end
+end
+
+local timer;
+function PartyCooldownTracker:scheduleUpdateFrames(allstates, duration)
+    if ( timer ) then WeakAuras.timer:CancelTimer(timer); end
+    timer = WeakAuras.timer:ScheduleTimer(function()
+        self:updateFrames(allstates) end, 
+        duration
+    );
+end
+
+PartyCooldownTracker.Events = {};
+function PartyCooldownTracker:scheduleUpdateEvent(event, duration, ...)
+    if ( ( not event ) or (not duration ) ) then
+        return
+    end
+    if ( self.Events[event] ) then self.Events[event] = WeakAuras.timer:CancelTimer(self.Events[event]); end
+    self.Events[event] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 
+    duration, event, ...);
+end 
 
 PartyCooldownTracker.cds = {
     ["DEATHKNIGHT"] = {
@@ -964,16 +1826,16 @@ PartyCooldownTracker.cds = {
         [1719] = {
             ["cd"] = 300,
             ["minus"] = true,
-            ["minusTabIndex"] = 3,
-            ["minusTalentIndex"] = 13,
-            ["minusPerPoint"] = 30,
+            ["minusTabIndex"] = 2,
+            ["minusTalentIndex"] = 18,
+            ["minusPerPoint"] = 33.333,
         },
         [20230] = {
             ["cd"] = 300,
             ["minus"] = true,
-            ["minusTabIndex"] = 3,
-            ["minusTalentIndex"] = 13,
-            ["minusPerPoint"] = 30,
+            ["minusTabIndex"] = 2,
+            ["minusTalentIndex"] = 18,
+            ["minusPerPoint"] = 33.333,
         },
         [20252] =  {
             ["cd"] = 25,
@@ -1023,18 +1885,24 @@ PartyCooldownTracker.cds = {
             ["talentIndex"] = 27,
             ["cd"] = 20,
             ["glyph"] = {["glyphID"] = 63325, ["minus"] = 3},
+        },
+        [12292] = {
+            ["tReq"] = true,
+            ["tabIndex"] = 3,
+            ["talentIndex"] = 14,
+            ["cd"] = 180,
         }, 
     },    
-}
+};
 
-if config.cds then
+if ( config.cds ) then
     for class, classData in pairs(config.cds) do
-        if PartyCooldownTracker.cds[class] then
+        if ( PartyCooldownTracker.cds[class] ) then
             for spellID, enable in pairs(classData) do
-                spellID = tonumber(spellID)
-                local spellData = PartyCooldownTracker.cds[class][spellID]
-                if spellData then
-                    spellData.display = enable
+                spellID = tonumber(spellID);
+                local spellDATA = PartyCooldownTracker.cds[class][spellID];
+                if ( spellDATA ) then
+                    spellDATA.display = enable;
                 end
             end
         end
@@ -1042,10 +1910,10 @@ if config.cds then
 end
 
 -- Heroism / Bloodlust
-if UnitFactionGroup("player") == "Horde" then
-    PartyCooldownTracker.cds["SHAMAN"][32182] = nil
+if ( UnitFactionGroup("player") == "Horde" ) then
+    PartyCooldownTracker.cds["SHAMAN"][32182] = nil;
 else
-    PartyCooldownTracker.cds["SHAMAN"][2825] = nil
+    PartyCooldownTracker.cds["SHAMAN"][2825] = nil;
 end
 -- preparation spells
 PartyCooldownTracker.refresh = {
@@ -1057,7 +1925,7 @@ PartyCooldownTracker.refresh = {
     }, -- HUNTER
     [11958] = {42917, 45438, 43039, 31687, 44572, 12472}, -- MAGE
     [46584] = {47481}, -- DK
-}
+};
 
 PartyCooldownTracker.anyCDs = {
     -- spellID                itemID/race                          
@@ -1078,13 +1946,13 @@ PartyCooldownTracker.anyCDs = {
     [20549] = {["cd"] = 120, ["race"] = "Tauren"}, -- Громовая поступь
     [26297] = {["cd"] = 180, ["race"] = "Troll"}, -- Берсерк
     [28730] = {["cd"] = 120, ["race"] = "BloodElf"}  -- Волшебный поток
-}
+};
 
-if config.ANY then
+if ( config.ANY ) then
     for spellID, enable in pairs(config.ANY) do
-        spellID = tonumber(spellID) 
-        if PartyCooldownTracker.anyCDs[spellID] then
-            PartyCooldownTracker.anyCDs[spellID].display = enable
+        spellID = tonumber(spellID);
+        if ( PartyCooldownTracker.anyCDs[spellID] ) then
+            PartyCooldownTracker.anyCDs[spellID].display = enable;
         end
     end
 end
@@ -1118,7 +1986,7 @@ PartyCooldownTracker.USS = {
         display = PartyCooldownTracker.cds.PRIEST[53007].display,
         id = 53007
     }
-}
+};
 -- spells that have one CD"s
 PartyCooldownTracker.relationship = {
     ["PALADIN"] = {
@@ -1142,9 +2010,9 @@ PartyCooldownTracker.relationship = {
         [49376] = {[16979] = 15},
         [16979] = {[49376] = 15}
     }
-}
+};
 
-local L = {}
+local L = {};
 if GetLocale() == "ruRU" then
     L["Felhunter"] = "Охотник Скверны"
     L["Voidwalker"] = "Демон Бездны"
@@ -1230,16 +2098,16 @@ PartyCooldownTracker.pets = {
         [53561] = {["cd"] = 40},
         [53480] = {["cd"] = 60},
     },
-}
+};
 
 for _, classData in pairs(config.cds) do
-    if classData.pet then
+    if ( classData.pet ) then
         for spellID, enable in pairs(classData.pet) do
-            spellID = tonumber(spellID)
+            spellID = tonumber(spellID);
             for type, data in pairs(PartyCooldownTracker.pets) do
                 for spellId in pairs(data) do
-                    if spellId == spellID then
-                        PartyCooldownTracker.pets[type][spellID].display = enable
+                    if ( spellId == spellID ) then
+                        PartyCooldownTracker.pets[type][spellID].display = enable;
                     end
                 end
             end
@@ -1254,814 +2122,4 @@ PartyCooldownTracker.blacklist = {
     [14751] = true, -- Внутреннее сосредоточение
     [46584] = true, -- Воскрешение мертвых
     [20216] = true, -- Божественное одобрение
-}
--------------------------------------------------------------------------------------------------------
-PartyCooldownTracker.roster = PartyCooldownTracker.roster or {}
-PartyCooldownTracker.pet_roster = PartyCooldownTracker.pet_roster or {} 
-
-function PartyCooldownTracker:GetNumPartyMembers()
-    if GetNumPartyMembers() == 0 then return 0 end
-    return config.countUnits <= GetNumPartyMembers() and config.countUnits or GetNumPartyMembers()
-end
---------------------------------------------------------------------------------------------------------------------
-function PartyCooldownTracker:SaveCurrentSession() 
-    db.displays[self.id][WeakAuras.me] = {}
-    local data = db.displays[self.id][WeakAuras.me]
-    data.roster = self.roster
-end
-
-function PartyCooldownTracker:LoadLastSession()
-    local data = db.displays[self.id][WeakAuras.me]
-    local member = {}
-
-    for i = 1, self:GetNumPartyMembers() do
-        local unit = "party"..i
-        local unitGUID = UnitGUID(unit)
-        if unitGUID then member[unitGUID] = unit end
-    end
-
-    if data and data.roster then
-        for guid, unitData in pairs(data.roster) do
-            if member[guid] then
-                local class = unitData.class
-                local unitID = member[guid]
-                local spells = {}
-                for spellID, info in pairs(unitData.spells) do
-                    if ( self.cds[class][spellID] and self.cds[class][spellID].display )
-                    or ( self.anyCDs[spellID] and self.anyCDs[spellID].display ) then
-                        if info.exp and math.abs(info.exp - GetTime()) < info.cd then
-                            spells[spellID] = info
-                        else
-                            info.exp = GetTime()
-                            spells[spellID] = info
-                        end
-                    end
-                end
-
-                for _, itemData in pairs(unitData.trinkets) do
-                    if not itemData.spellID then break end
-                    if ( self.anyCDs[itemData.spellID] and self.anyCDs[itemData.spellID].display ) then
-                        spells[itemData.spellID] = spells[itemData.spellID] or {}
-                        spells[itemData.spellID].cd = unitData.spells[itemData.spellID] and unitData.spells[itemData.spellID].cd
-                        spells[itemData.spellID].exp = unitData.spells[itemData.spellID] and unitData.spells[itemData.spellID].exp
-                    end
-                end
-
-                self.roster[guid] = unitData
-                self.roster[guid].spells = spells
-                self.roster[guid].unitID = unitID
-
-                for petGUID, petData in pairs(unitData.pet) do
-                    self.pet_roster[petGUID] = petData
-                    for spellID, info in pairs(petData.spells) do
-                        self:AddCooldownInfo(guid, spellID, info.cd)
-                    end
-                end
-
-            end
-        end
-    end
-    
-end
----------------------------------------------------------------------------------------------------------------------
-local function GetSpellIcon(spellID, unit)
-    local icon = select(3,GetSpellInfo(spellID))
-    local data = PartyCooldownTracker.roster[UnitGUID(unit)]
-
-    if data and data.trinkets then
-        for slotID in pairs(data.trinkets) do
-            if slotID and data.trinkets[slotID].spellID == spellID then
-                icon = GetItemIcon(data.trinkets[slotID].itemID) or icon
-                break
-            end
-        end
-    end
-    return icon
-end 
-
-function PartyCooldownTracker.GetPetGUID(unitID)
-    if ( unitID and unitID:match("party") ) then
-        local index = tonumber(unitID:match("%d"))
-        local petID = "partypet"..index
-        if UnitExists(petID) then
-            local petGUID = UnitGUID(petID)
-            return petGUID
-        end
-    end            
-end
-
-local function GetPetID(unitID)
-    local i = string.match(unitID, "%d")
-    if i and UnitExists("partypet"..i) then
-        return "partypet"..i
-    end
-end
-
-function PartyCooldownTracker:AdditionalVerification(allstates, subEvent, guid, spellID, destGUID)
-    if not ( subEvent == "SPELL_CAST_SUCCESS" ) then return end
-    local class = self.roster[guid] and self.roster[guid].class
-    if self.relationship[class] and self.relationship[class][spellID] then
-        if not self.roster[guid].spells[spellID] then 
-            return true, self:Relationship(allstates, guid, spellID, destGUID)
-        end
-    end
-end
-
-function PartyCooldownTracker:SpellIsDisplay(guid, spellID, spellName)
-    if self.roster[guid] and self.roster[guid].spells[spellID] then
-        return guid
-    elseif self.pet_roster[guid] then
-        guid = self.pet_roster[guid].unitGUID
-        if self.roster[guid] and self.roster[guid].spells[spellID] then
-            return guid
-        end
-    elseif self.roster[guid] and self.USS[spellName] and self.USS[spellName].display then
-        return guid
-    else
-        return false
-    end
-end
-
-function PartyCooldownTracker:AddInfo(guid, spellID, exp, dst)
-    if not ( self.roster[guid] and self.roster[guid].spells[spellID] ) then return end
-    self.roster[guid].spells[spellID].exp = exp
-    self.roster[guid].spells[spellID].dst = dst 
-end
-
-local C_PVP = {};
-C_PVP[0] = true;
-
-C_PVP.IsPVPMap = function() 
-    return C_PVP[GetCurrentMapAreaID()]
-end
-
-function PartyCooldownTracker:Update(allstates)
-    if not C_PVP.IsPVPMap() then return end
-    for _, state in pairs(allstates) do
-        if state and state.show then
-            state.changed=  true
-            state.expirationTime = GetTime()
-            state.dst = false
-            state.isBuff = false
-            state.isCD = false
-            
-            self:AddInfo(state.guid, state.spellID, state.expirationTime, state.dst)
-        end
-    end
-    return true
-end
--- Checking spells that have one CD
-function PartyCooldownTracker:Relationship(allstates, guid, spellID, destGUID) 
-    local class = self.roster[guid].class
-    if self.relationship[class] and self.relationship[class][spellID] then
-        if spellID == 10278 and guid ~= destGUID then return end
-        for id, cd in pairs(self.relationship[class][spellID]) do
-            local state = allstates[guid..id]
-            if state and (not state.isCD or state.expirationTime < cd + GetTime()) then
-                
-                state.show = true
-                state.changed = true
-                state.progressType = "timed"
-                state.duration = cd
-                state.expirationTime = cd + GetTime()
-                state.isCD = true
-                state.dst = config.des
-                
-                allstates[guid..id] = state
-                self:AddInfo(guid, id, state.expirationTime, state.dst)
-            end
-        end
-    end    
-end      
-
-function PartyCooldownTracker:GetHypothermia(allstates, guid, id)
-    local state = allstates[guid..id]
-    if not state then return end
-
-    local hypothermia = GetSpellInfo(41425)
-    state.changed = true
-    
-    if WA_GetUnitDebuff(state.unit, hypothermia) then
-        state.expirationTime = select(7, UnitDebuff(state.unit, hypothermia))
-        allstates[guid..id] = state
-        self:AddInfo(guid, id, state.expirationTime, state.dst)
-    else
-        state.dst = false
-        state.isCD = false
-        state.isBuff = false
-        state.expirationTime = GetTime()
-        allstates[guid..id] = state
-        self:AddInfo(guid, id, state.expirationTime, state.dst)
-    end 
-end
-
-function PartyCooldownTracker:RefreshState(allstates, guid, spellID) 
-    for _, id in pairs(self.refresh[spellID]) do
-        if id == 45438 then return self:GetHypothermia(allstates, guid, id) end
-        if allstates[guid..id] then
-            local state = allstates[guid..id]
-            state.changed = true
-            state.expirationTime = GetTime()
-            state.dst = false
-            state.isCD = false
-            state.isBuff = false
-            
-            allstates[guid..id] = state
-            self:AddInfo(guid, id, state.expirationTime, state.dst)
-        end
-    end
-end
-
-function PartyCooldownTracker:SetDesaturated(allstates, guid, spellID)
-    local state = allstates[guid..spellID]
-    if state then
-        if self.blacklist[spellID] then
-            state.expirationTime = GetTime() + state.duration
-            state.dst = config.des
-            state.isCD = true
-            state.isBuff = false
-            
-            self:AddInfo(guid, spellID, state.expirationTime, state.dst)
-            return true
-        elseif not self.blacklist[spellID] and state.isCD and state.isBuff then
-            state.expirationTime = state.expirationTime 
-            state.isBuff = false
-            state.dst = config.des
-            
-            self:AddInfo(guid, spellID, state.expirationTime, state.dst)
-            return true
-        end
-    end 
-end
-
-function PartyCooldownTracker:SetGlow(allstates, guid, spellID, duration)
-    local state = allstates[guid..spellID]
-    if state then
-        state.isBuff = config.glow
-        state.dst = false
-        if not self.blacklist[spellID] and duration then
-            if spellID == 43039 then duration = 60 end
-            WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration,
-            "COMBAT_LOG_EVENT_UNFILTERED", GetTime(), "SPELL_AURA_REMOVED", 
-            guid, nil, nil, nil, nil, nil, spellID)
-        end
-        return true      
-    end    
-end
-----------------------        CREATE FRAME      -------------------------------------------------------
--- created when the event is fired
-function PartyCooldownTracker:EditState(allstates, guid, spellID, subEvent, destGUID) 
-    allstates[guid..spellID] = allstates[guid..spellID] or {}
-    local state = allstates[guid..spellID]
-    local data = self.roster[guid]
-    local unit = data.unitID
-    local class = data.class
-
-    if ( not data or not (data.spells and data.spells[spellID]) ) then 
-        return; 
-    end
-
-    state.show = true
-    state.changed = true
-    state.progressType = state.progressType or "timed"
-    state.icon = state.icon or GetSpellIcon(spellID, unit) 
-    state.duration = data.spells[spellID].cd or 0 -- костыль
-    state.expirationTime = GetTime() + state.duration 
-    -- custom
-    state.autoHide = config.show
-    state.isCD = true
-    state.dst = config.des
-    state.isBuff = false
-    state.unit = data.unitID
-    state.unitName = data.unitName
-    state.guid = guid
-    state.spellID = spellID
-
-    allstates[guid..spellID] = state
-    self:AddInfo(guid, spellID, state.expirationTime, state.dst)
-    
-    if self.refresh[spellID] and subEvent ~= "UNIT_DIED" then
-        self:RefreshState(allstates, guid, spellID)
-    elseif self.relationship[class] and self.relationship[class][spellID] then
-        self:Relationship(allstates, guid, spellID, destGUID)
-    end
-    return true
-end
--- main create
-function PartyCooldownTracker:CreateCDFrame(allstates, guid, spellID)
-    local unitData = self.roster[guid]
-    local spellData = unitData.spells[spellID]
-    
-    allstates[guid..spellID] = {
-        show = true,
-        changed = true,
-        autoHide = config.show,
-        icon = GetSpellIcon(spellID, unitData.unitID), 
-        progressType = "timed",
-        duration = spellData.cd,
-        expirationTime = spellData.exp or GetTime(),
-        -- custom
-        unit = unitData.unitID,
-        isCD = ( spellData.exp and spellData.exp > GetTime()) and true or false,
-        unitName = unitData.unitName,
-        dst = spellData.dst or false,
-        isBuff = false,
-        guid = guid,
-        spellID = spellID,
-    }
-end
-
-function PartyCooldownTracker:CreateFrame(allstates, guid)
-    local unitData = self.roster[guid]
-    for spellID in pairs(unitData.spells) do
-        self:CreateCDFrame(allstates, guid, spellID)
-    end
-end
-
-function PartyCooldownTracker:CreateFrames(allstates)
-    for guid in pairs(self.roster) do
-        self:CreateFrame(allstates, guid)
-    end
-end
---------------------------------------------------------------------------
-function PartyCooldownTracker:AddCooldownInfo(guid, id, cd)
-    self.roster[guid].spells[id] = self.roster[guid].spells[id] or {}
-    self.roster[guid].spells[id].cd = cd
-end
-
-function PartyCooldownTracker:AddTrinketInfo(guid, invSlot, itemName, itemID, spellID)
-    self.roster[guid].trinkets[invSlot] = self.roster[guid].trinkets[invSlot] or {}
-    self.roster[guid].trinkets[invSlot].itemName = itemName
-    self.roster[guid].trinkets[invSlot].spellID = spellID
-    self.roster[guid].trinkets[invSlot].itemID = itemID
-end
-
-function PartyCooldownTracker:AddPetsInfo(unitGUID, petGUID, id, cd)
-    self.roster[unitGUID].pet[petGUID].spells[id] = self.roster[unitGUID].pet[petGUID].spells[id] or {}
-    self.roster[unitGUID].pet[petGUID].spells[id].cd = cd
-end
---------------------------------------------------------------------------
-function PartyCooldownTracker:RemoveCooldownInfo(allstates, guid, spellID)
-    self.roster[guid].spells[spellID] = nil
-    local state = allstates[guid..spellID]
-    
-    if state then
-        state.show = false
-        state.changed = true
-        allstates[guid..spellID] = state
-        return true 
-    end
-end
-
-function PartyCooldownTracker:PetCooldownRemove(allstates, guid)
-    local update = false
-    for petGUID, data in pairs(self.pet_roster) do
-        if data.unitGUID == guid then
-            for spellID in pairs(data.spells) do
-                self:RemoveCooldownInfo(allstates, guid, spellID)
-            end
-            self.pet_roster[petGUID] = nil
-            self.roster[guid].pet[petGUID] = nil
-            update = true
-        end
-    end
-    return update
-end
-
-function PartyCooldownTracker:PetCooldownInit(allstates, unitGUID, petGUID, petType)
-    local createFrames = false
-    for spellID, data in pairs(self.pets[petType]) do
-        if data.display then
-            self.pet_roster[petGUID].spells[spellID] = true
-            self:AddPetsInfo(unitGUID, petGUID, spellID, data.cd)
-            self:AddCooldownInfo(unitGUID, spellID, data.cd)
-            self:CreateCDFrame(allstates, unitGUID, spellID)
-            createFrames = true
-        end
-    end
-    return createFrames
-end
-
-function PartyCooldownTracker:UnitPetCDInit(allstates, unit)
-    local createFrame = false
-    local unitGUID = UnitGUID(unit)
-    local petID = GetPetID(unit)
-
-    if petID and self.roster[unitGUID] then
-        local petType = UnitCreatureFamily(petID) 
-        local petGUID = UnitGUID(petID)
-        if self.pets[petType] and not self.pet_roster[petGUID] then
-            self.pet_roster[petGUID] = {
-                unitGUID = unitGUID,
-                type = petType,
-                spells = {},
-            }
-            self.roster[unitGUID].pet[petGUID] = { 
-                spells = {}, 
-                type = petType,
-                unitGUID = unitGUID,
-            } 
-            if self:PetCooldownInit(allstates, unitGUID, petGUID, petType) then
-                createFrame = true
-            end
-        end
-    end
-    
-    return createFrame
-end
-
-local function GetTableSize(object)
-    local t = {}
-    for k in pairs(object) do
-        tinsert(t, k)
-    end
-    return #t
-end
-
-PartyCooldownTracker.detected = {}
-function PartyCooldownTracker:UnitIsDetected(unit, guid, isDetected)
-    if self.detected[guid] then 
-        self.detected[guid] = WeakAuras.timer:CancelTimer(self.detected[guid]) 
-    end
-    if isDetected then
-        self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 0.05, "WA_INSPECT_READY", unit, guid, true)
-    else
-        local duration = GetTableSize(self.detected) + 1
-        self.detected[guid] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, duration, "WA_INSPECT_READY", unit, guid)
-    end
-end
-
-local function CreateTrinketFrame(allstates, guid, invSlot, itemName, itemID, spellID, cooldown)
-    PartyCooldownTracker:AddCooldownInfo(guid, spellID, cooldown);
-    PartyCooldownTracker:AddTrinketInfo(guid, invSlot, itemName, itemID, spellID);
-    PartyCooldownTracker:CreateCDFrame(allstates, guid, spellID);
-
-    return true;
-end
-
-function PartyCooldownTracker:UnitItemInit(allstates, unit, guid)
-    if not self.roster[guid] then return end
-    local createFrames = false
-    local invTrinkets = {}
-    local check = false
-    local Data = self.roster[guid]
-    
-    for invSlot = 13, 14 do
-        local itemLink = GetInventoryItemLink(unit, invSlot) or ""
-        local itemID = (itemLink):match("item:(%d+):") or ""
-        local itemName = GetItemInfo(itemLink)
-        if Data.trinkets and Data.trinkets[invSlot] then
-            if itemName and itemName ~= Data.trinkets[invSlot].itemName then
-                local spellID = Data.trinkets[invSlot].spellID
-                createFrames = self:RemoveCooldownInfo(allstates, guid, spellID)
-                Data.trinkets[invSlot] = nil
-            end
-        end
-        
-        if itemName then 
-            invTrinkets[itemName] = invSlot
-            check = true
-        end
-    end
-    
-    if check then
-        for spellID, data in pairs(self.anyCDs) do
-            if data.display and data.trinket then
-                if type(data.trinket) == "table" then
-                    for _, itemId in pairs(data.trinket) do
-                        if invTrinkets[GetItemInfo(itemId)] then
-                            createFrames = CreateTrinketFrame(allstates, guid, invTrinkets[GetItemInfo(itemId)], GetItemInfo(itemId), itemId, spellID, data.cd)
-                        end
-                    end
-                else
-                    local itemName = GetItemInfo(data.trinket) 
-                    if invTrinkets[itemName] then
-                        createFrames = CreateTrinketFrame(allstates, guid, invTrinkets[itemName], itemName, data.trinket, spellID, data.cd)
-                    end
-                end
-            end
-        end
-    end
-
-    return createFrames
-end
-
-function PartyCooldownTracker:CheckTalents(allstates, unit, guid, createFrames)
-    local update = createFrames
-    local class = self.roster[guid].class
-    local glyphs = {}
-    local active = self.libGT:GetActiveTalentGroup(unit)
-    
-    for i = 1, 6 do 
-        local glyph = select(i, self.libGT:GetUnitGlyphs(unit, active))
-        if glyph then   
-            glyphs[glyph] = true
-        end
-    end
-    
-    for spellID, data in pairs(self.cds[class]) do
-        if data.display and (data.tReq or data.minus or data.glyph) then   
-            if not data.tReq
-            or select(5, self.libGT:GetTalentInfo(unit, data.tabIndex, data.talentIndex)) ~= 0 then
-
-                local cooldown = data.cd 
-                if data.glyph and glyphs[data.glyph.glyphID] then
-                    cooldown = cooldown - data.glyph.minus
-                end
-
-                if data.minus then
-                    if type(data.minusTabIndex) == "table" then
-                        for i = 1, #data.minusTabIndex do
-                            local curRank = select(5, self.libGT:GetTalentInfo(unit, data.minusTabIndex[i], data.minusTalentIndex[i])) or 0
-                            cooldown = cooldown - curRank * data.minusPerPoint[i]
-                        end
-                    else
-                        local curRank = select(5, self.libGT:GetTalentInfo(unit, data.minusTabIndex, data.minusTalentIndex)) or 0
-                        cooldown = cooldown - curRank * data.minusPerPoint
-                    end
-                end
-
-                if class == "HUNTER" then
-                    for spell, spellData in pairs(self.relationship[class]) do
-                        for spellid in pairs(spellData) do
-                            if spellid == spellID then
-                                self.relationship[class][spell][spellid] = cooldown 
-                            end
-                        end 
-                    end
-                end
-                
-                self:AddCooldownInfo(guid, spellID, cooldown)
-                update = true
-            elseif self.roster[guid].spells[spellID] then
-                update = self:RemoveCooldownInfo(allstates, guid, spellID)
-            end
-        end
-    end
-    if update then
-        self:CreateFrame(allstates, guid)
-    end
-    WeakAuras.ScanEvents("UNIT_IS_VISIBLE", unit, guid)
-    return update
-end
-
-function PartyCooldownTracker:UnitCooldownsInit(allstates, unit, guid)
-    local class = self.roster[guid].class
-    local race = self.roster[guid].race
-    local check = false
-    local createFrames = false
-    
-    for spellID, data in pairs(self.cds[class]) do
-        if data.display then
-            if not data.tReq then
-                self:AddCooldownInfo(guid, spellID, data.cd)
-                createFrames = true
-            end
-            
-            if not check
-            and (data.tReq or data.minus) then
-                check = true
-            end
-        end
-    end  
-    
-    for spellID, data in pairs(self.anyCDs) do
-        if data.display then
-            if data.race == race then 
-                self:AddCooldownInfo(guid, spellID, data.cd)
-                createFrames = true
-            end
-        end
-    end
-    
-    if check 
-    and self.libGT
-    and self.libGT:GetUnitTalents(unit) then
-        return self:CheckTalents(allstates, unit, guid, createFrames)
-    elseif createFrames then
-        self:CreateFrame(allstates, guid)
-    end
-    return createFrames
-end
-
-function PartyCooldownTracker:InitNewMembers(allstates)
-    local updateFrames = false  
-    for guid, unitData in pairs(self.roster) do
-        if not UnitInParty(unitData.unitName) then
-            if unitData.spells then
-                for id in pairs(unitData.spells) do
-                    self:RemoveCooldownInfo(allstates, guid, id)
-                    self:PetCooldownRemove(allstates, guid)
-                end 
-            end
-            self.roster[guid] = nil
-            updateFrames = true
-        end
-    end
-
-    for i = 1, self:GetNumPartyMembers() do
-        local unit = "party"..i
-        local unitName = UnitName(unit)
-        local faction = UnitFactionGroup(unit)  
-        local _, race = UnitRace(unit)
-        local guid = UnitGUID(unit)
-        local _, unitClass = UnitClass(unit)
-
-        if unitName ~= _G.UNKNOWNOBJECT
-        and not self.roster[guid] then
-            if self.cds[unitClass] then
-                self.roster[guid] = {
-                    spells = {},
-                    trinkets = {},
-                    pet = {},
-                    unitID = unit,
-                    class = unitClass,
-                    faction = faction,
-                    race = race,
-                    unitName = unitName,
-                }
-                if self:UnitPetCDInit(allstates, unit) then
-                    updateFrames = true
-                end
-                if self:UnitCooldownsInit(allstates, unit, guid) then
-                    updateFrames = true
-                end
-            end
-        end
-    end
-    return updateFrames
-end
--------------- >> ANCHOR TO FRMAE << ----------------
-local defaultFramePriorities = {
-    -- raid frames
-    [0] = nil,
-    [1] = "^Vd1", -- vuhdo
-    [2] = "^Vd2", -- vuhdo
-    [3] = "^Vd3", -- vuhdo
-    [4] = "^Vd4", -- vuhdo
-    [5] = "^Vd5", -- vuhdo
-    [6] = "^Vd", -- vuhdo
-    [7] = "^HealBot", -- healbot
-    [8] = "^GridLayout", -- grid
-    [9] = "^Grid2Layout", -- grid2
-    [10] = "^PlexusLayout", -- plexus
-    [11] = "^ElvUF_RaidGroup", -- elv
-    [12] = "^oUF_bdGrid", -- bdgrid
-    [13] = "^oUF_.-Raid", -- generic oUF
-    [14] = "^LimeGroup", -- lime
-    [15] = "^SUFHeaderraid", -- suf
-    -- party frames
-    [16] = "^AleaUI_GroupHeader", -- Alea
-    [17] = "^SUFHeaderparty", --suf
-    [18] = "^ElvUF_PartyGroup", -- elv
-    [19] = "^oUF_.-Party", -- generic oUF
-    [20] = "^PitBull4_Groups_Party", -- pitbull4
-    [21] = "^XPerl_party", -- xperl
-    [22] = "^PartyMemberFrame", -- blizz
-    [23] = "^CompactRaid", -- blizz
-}
-
-local defaultPartyTargetFrames = {
-    "SUFChildpartytarget%d",
-}
-
-local attachIndex = config.frame - 1
-local getFrameOptions = {
-    framePriorities = {
-        [1] = defaultFramePriorities[attachIndex],
-    },
-    ignorePartyTargetFrame = true,
-    partyTargetFrames = defaultPartyTargetFrames,
-}
-if config.blizzFrame then
-    getFrameOptions.ignoreFrames = {
-        "PitBull4_Frames_Target's target's target",
-        "ElvUF_PartyGroup%dUnitButton%dTarget",
-        "ElvUF_FocusTarget",
-        "PartyMemberFrame",
-        "RavenButton",
-    }
-end
-
-local growDirections = {
-    [1] = "BOTTOM",
-    [2] = "BOTTOMLEFT",
-    [3] = "BOTTOMRIGHT",    
-    [4] = "CENTER",
-    [5] = "LEFT",
-    [6] = "RIGHT",
-    [7] = "TOP",
-    [8] = "TOPLEFT",
-    [9] = "TOPRIGHT",
-}
-
-PartyCooldownTracker.positionFrom = growDirections[config.anchor]
-PartyCooldownTracker.positionTo = growDirections[config.anchorTo]
-PartyCooldownTracker.spacing = config.spacing
-PartyCooldownTracker.xOffset = config.xOffset
-PartyCooldownTracker.yOffset = config.yOffset
-PartyCooldownTracker.column = config.column
-PartyCooldownTracker.auraCount = {}
-
-local function setIconPosition(self, state, rowIdx)
-    local unit
-    for i = 1, self:GetNumPartyMembers() do
-        local u = "party"..i
-        if UnitName(u) == state.unitName then unit = u end
-    end
-    if not unit then
-        state.show = false
-        state.changed = true
-    else
-        state.unitID = unit
-        local region = WeakAuras.GetRegion(self.id, state.guid..state.spellID)
-        local f = WeakAuras.GetUnitFrame(state.unitID, getFrameOptions)
-        if f and region then
-            self.auraCount[state.unitID] = self.auraCount[state.unitID] or {}
-            self.auraCount[state.unitID].rowIdx = self.auraCount[state.unitID].rowIdx or 0
-            self.auraCount[state.unitID].column = self.auraCount[state.unitID].column or 0
-            self.auraCount[state.unitID].delta = self.auraCount[state.unitID].delta or 1
-
-            if self.auraCount[state.unitID].rowIdx == self.column then
-                self.auraCount[state.unitID].column = self.auraCount[state.unitID].column + 1
-                self.auraCount[state.unitID].rowIdx = 0
-                self.auraCount[state.unitID].delta = rowIdx
-            end
-
-            local order = self.auraCount[state.unitID].column
-            local xoffset, yoffset = 0, 0
-            local height, width = region:GetHeight() + self.spacing, region:GetWidth() + self.spacing
-            local delta = self.auraCount[state.unitID].delta
-
-            if config.direction == 1 then -- Влево, затем вниз
-                yoffset = yoffset - (order * height)
-                xoffset = xoffset - (rowIdx - delta) * width
-            elseif  config.direction == 2 then -- Вправо, затем вниз
-                yoffset = yoffset - (order * height)
-                xoffset = xoffset + (rowIdx - delta) * width
-            elseif  config.direction == 3 then -- Влево, затем вверх
-                yoffset = yoffset + (order * height)
-                xoffset = xoffset - (rowIdx - delta) * width
-            elseif  config.direction == 4 then  -- Вправо, затем вверх
-                yoffset = yoffset + (order * height)
-                xoffset = xoffset + (rowIdx - delta) * width
-            end
-
-            region:SetAnchor(self.positionFrom, f, self.positionTo)
-            region:SetOffset(xoffset + self.xOffset, yoffset + self.yOffset)
-            self.auraCount[state.unitID].rowIdx = self.auraCount[state.unitID].rowIdx + 1
-        else
-            region:SetAnchor(self.positionFrom, _G.UIParent, self.positionTo)
-            region:SetOffset(-3000, 0) 
-            if not config.lib_error then
-                DEFAULT_CHAT_FRAME:AddMessage("|cff69ccf0PartyCooldownTracker|r: 404 frame not found. Calling the function again.")
-            end
-            self:scheduleUpdateEvent("INVISUS_COOLDOWNS", 0.5, "FRAME_UPDATE")
-        end
-    end
-end
-
-function PartyCooldownTracker:sort(allstates)
-    local t = {}
-    for _, state in pairs(allstates) do
-        if state.spellID then
-            t[#t+1] = state
-        end
-    end
-    table.sort(t, function (a,b)     
-        return ( a.spellID > b.spellID ) 
-    end)
-    
-    return t
-end
-
-PartyCooldownTracker.updateFrames = function(self, allstates)
-    table.wipe(self.auraCount)
-    local sortTable = self:sort(allstates)
-    for guid in pairs(self.roster) do  
-        local rowIdx = 0
-        for _, state in pairs(sortTable) do
-            if state.show and state.guid == guid then
-                rowIdx = rowIdx + 1
-                setIconPosition(self, state, rowIdx)
-            end                
-        end            
-    end
-end
-
-local timer
-function PartyCooldownTracker:scheduleUpdateFrames(allstates, duration)
-    if timer then WeakAuras.timer:CancelTimer(timer) end
-    timer = WeakAuras.timer:ScheduleTimer(function()
-        self:updateFrames(allstates) end, 
-        duration
-    )
-end
-
-PartyCooldownTracker.Events = {}
-function PartyCooldownTracker:scheduleUpdateEvent(event, duration, ...)
-    if not ( event and duration ) then return end
-    if self.Events[event] then self.Events[event] = WeakAuras.timer:CancelTimer(self.Events[event]) end
-    self.Events[event] = WeakAuras.timer:ScheduleTimer(WeakAuras.ScanEvents, 
-    duration, event, ...) 
-end 
+};
