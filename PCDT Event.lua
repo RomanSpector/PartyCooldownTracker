@@ -1,4 +1,4 @@
-function WeakAuras(allstates, event, ...)
+function OnEvent(allstates, event, ...)
     
     local self, WeakAuras = aura_env, WeakAuras;
     
